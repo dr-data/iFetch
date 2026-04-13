@@ -117,7 +117,7 @@ class DownloadManager:
         # Notify plugins that authentication completed successfully
         self.plugin_manager.dispatch(
             "on_authenticated",
-            self,
+            downloader=self,
             context={
                 "email": self.email,
                 "max_workers": self.max_workers,
