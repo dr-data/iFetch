@@ -13,6 +13,7 @@ original file tree.  It enables two key capabilities:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import time
 import threading
@@ -32,6 +33,10 @@ class VersionManager:
         self.meta_path = self.root / self.META_FILENAME
         self.versions_dir = self.root / self.VERSIONS_DIRNAME
         self.versions_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(self.versions_dir, 0o700)
+        except OSError:
+            pass
         self._data: Dict[str, List[Dict[str, Any]]] = {}
         self._lock = threading.Lock()
         self._load()
@@ -91,7 +96,10 @@ class VersionManager:
             with self._lock:
                 # Deep copy to avoid "dictionary changed size during iteration"
                 data_snapshot = copy.deepcopy(self._data)
-            with self.meta_path.open("w") as fp:
+            with os.fdopen(
+                os.open(str(self.meta_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+                "w",
+            ) as fp:
                 json.dump(data_snapshot, fp, indent=2)
         except (OSError, RuntimeError):
             pass

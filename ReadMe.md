@@ -37,7 +37,7 @@ source ivenv/bin/activate
 
 2. Install Python dependencies:
 ```sh
-pip install pyicloud tqdm requests keyring
+pip install -r requirements.txt
 ```
 
 3. Install system keyring dependencies:
@@ -103,6 +103,7 @@ python ifetch/cli.py Documents/Programming ~/Work/Code \
 | `--list-shared`         | List top-level items shared *with* you                            | off             |
 | `--profile NAME`        | Apply include/exclude patterns from profile file                  | (no filter)     |
 | `--profile-file PATH`   | Custom path to profile JSON (defaults to `~/.ifetch_profiles.json`) | default path    |
+| `--enable-plugins`      | Enable plugin loading (disabled by default for safety)            | off             |
 
 ### List Shared Items
 List everything that has been shared with your account (no path needed):
@@ -148,7 +149,12 @@ class Notify(BasePlugin):
         if success:
             print(f"Downloaded {remote_item.name} → {local_path}")
 ```
-iFetch auto-discovers plugins on startup.
+iFetch loads plugins only when `--enable-plugins` is passed.
+
+### Safety Notes
+- iFetch does **not** delete files from iCloud Drive.
+- iFetch only reads from iCloud and writes to your local destination.
+- Plugin loading is disabled by default; enable only trusted plugins.
 
 ## Contributing
 Contributions are welcome! Please feel free to submit a Pull Request.

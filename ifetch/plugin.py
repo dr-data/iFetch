@@ -33,10 +33,10 @@ of iFetch can add more data without breaking compatibility.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import os
 import sys
 from pathlib import Path
-from types import ModuleType
 from typing import List, Sequence, Type
 
 __all__ = [
@@ -54,7 +54,7 @@ class BasePlugin:
     """
 
     # --- Authentication --------------------------------------------------
-    def on_authenticated(self, downloader, **kwargs):  # noqa: D401 – imperative mood
+    def on_authenticated(self, context, **kwargs):  # noqa: D401 – imperative mood
         """Called once iCloud authentication succeeds."""
 
     # --- Listing ---------------------------------------------------------
@@ -91,7 +91,19 @@ class PluginManager:
 
     _ENV_PATH = "IFETCH_PLUGIN_PATH"
 
-    def __init__(self, search_paths: Sequence[os.PathLike[str] | str] | None = None):
+    def __init__(
+        self,
+        search_paths: Sequence[os.PathLike[str] | str] | None = None,
+        enabled: bool = False,
+    ):
+        self._enabled = enabled
+        self._logger = logging.getLogger("icloud_downloader.plugins")
+
+        if not enabled:
+            self._paths = []
+            self._plugins = []
+            return
+
         # Determine plugin search paths – *plugins* dir next to project + env var
         default_path = Path(__file__).resolve().parent.parent / "plugins"
         env_path = os.getenv(self._ENV_PATH)
@@ -132,10 +144,7 @@ class PluginManager:
                 try:
                     cb(*args, **kwargs)
                 except Exception:  # pragma: no cover – plugin errors shouldn’t crash core
-                    # We deliberately swallow exceptions raised by plugins so that
-                    # they cannot destabilise the core application.  Consider
-                    # extending this with proper logging.
-                    pass
+                    self._logger.warning("Plugin hook '%s' failed for %s", hook, plugin.__class__.__name__)
 
     # ------------------------------------------------------------------
     # Internal

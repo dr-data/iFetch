@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from typing import Optional
 
@@ -31,5 +32,9 @@ def setup_logging(log_file: Optional[str] = None) -> logging.Logger:
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
+        try:
+            os.chmod(log_file, 0o600)
+        except OSError:
+            pass
 
     return logger

@@ -12,7 +12,7 @@ class _FakeResp:
     def __init__(self, content: bytes, status_code: int = 206):
         self.content = content
         self.status_code = status_code
-        self.url = "http://example.com"
+        self.url = "https://p01-content.icloud.com"
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -39,5 +39,11 @@ def test_download_chunk_success(monkeypatch):
 
     monkeypatch.setattr("ifetch.downloader.requests.get", _fake_get)
 
-    data = dm.download_chunk("http://example.com/file", 0, 2)
-    assert data == b"abc" 
+    data = dm.download_chunk("https://p01-content.icloud.com/file", 0, 2)
+    assert data == b"abc"
+
+
+def test_download_chunk_rejects_untrusted_host():
+    dm = DownloadManager(email="user@example.com", max_retries=1)
+    with pytest.raises(ValueError, match="Untrusted download host rejected"):
+        dm.download_chunk("https://example.com/file", 0, 2)

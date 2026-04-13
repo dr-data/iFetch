@@ -77,7 +77,7 @@ def test_plugin_hooks(tmp_path, monkeypatch):
     create_test_plugin(tmp_path)
     monkeypatch.setenv("IFETCH_PLUGIN_PATH", str(tmp_path))
 
-    dm = DownloadManager(email="user@example.com")
+    dm = DownloadManager(email="user@example.com", enable_plugins=True)
 
     # Monkeypatch time-intensive function: still dispatch success hook so plugin receives it
     def _fake_download(item, local_path):
@@ -108,4 +108,11 @@ def test_plugin_hooks(tmp_path, monkeypatch):
         "before_download",
         "after_download_True",
     }
-    assert set(events_mod.events) >= expected 
+    assert set(events_mod.events) >= expected
+
+
+def test_plugins_disabled_by_default(tmp_path, monkeypatch):
+    create_test_plugin(tmp_path)
+    monkeypatch.setenv("IFETCH_PLUGIN_PATH", str(tmp_path))
+    dm = DownloadManager(email="user@example.com")
+    assert dm.plugin_manager.plugins == []

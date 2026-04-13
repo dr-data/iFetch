@@ -83,6 +83,11 @@ def main():
         dest='profile_file',
         help='Custom path to a profile JSON file (overrides default ~/.ifetch_profiles.json)'
     )
+    parser.add_argument(
+        '--enable-plugins',
+        action='store_true',
+        help='Enable plugin loading (disabled by default for safety)'
+    )
 
     args = parser.parse_args()
 
@@ -113,7 +118,8 @@ def main():
             max_retries=args.max_retries,
             chunk_size=args.chunk_size,
             include_patterns=include_pats,
-            exclude_patterns=exclude_pats
+            exclude_patterns=exclude_pats,
+            enable_plugins=args.enable_plugins,
         )
 
         # Authenticate (will prompt for password if needed)

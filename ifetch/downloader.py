@@ -4,9 +4,11 @@ import shutil
 import json
 import threading
 import traceback
+import re
 from pathlib import Path
 from typing import Optional, List, Set, Dict, Any, Union
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlparse
 import requests
 from pyicloud import PyiCloudService
 from pyicloud.exceptions import (
@@ -32,6 +34,8 @@ class DownloadManager:
         chunk_size: int = 1024 * 1024,
         include_patterns: Optional[List[str]] = None,
         exclude_patterns: Optional[List[str]] = None,
+        enable_plugins: bool = False,
+        allowed_download_hosts: Optional[List[str]] = None,
     ):
         self.email = email or os.environ.get('ICLOUD_EMAIL')
         if not self.email:
@@ -51,8 +55,9 @@ class DownloadManager:
         self.include_patterns = include_patterns or []
         self.exclude_patterns = exclude_patterns or []
 
-        # Load plugins once during instantiation
-        self.plugin_manager = PluginManager()
+        # Load plugins only when explicitly enabled
+        self.plugin_manager = PluginManager(enabled=enable_plugins)
+        self.allowed_download_hosts = allowed_download_hosts or self._load_allowed_download_hosts()
 
         # Will be set when download() is invoked
         self.root_path: Optional[Path] = None
@@ -89,7 +94,12 @@ class DownloadManager:
                     name = device.get('deviceName') or 'SMS to ' + device.get('phoneNumber', 'unknown')
                     print(f"{i}: {name}")
 
-                idx = int(input("\nChoose a device: "))
+                idx_raw = input("\nChoose a device: ").strip()
+                if not idx_raw.isdigit():
+                    raise Exception("Invalid device selection")
+                idx = int(idx_raw)
+                if idx < 0 or idx >= len(devices):
+                    raise Exception("Device index out of range")
                 device = devices[idx]
                 if not self.api.send_verification_code(device):
                     raise Exception("Failed to send verification code")
@@ -105,7 +115,15 @@ class DownloadManager:
             raise Exception(f"Authentication failed: {e}")
 
         # Notify plugins that authentication completed successfully
-        self.plugin_manager.dispatch("on_authenticated", downloader=self)
+        self.plugin_manager.dispatch(
+            "on_authenticated",
+            {
+                "email": self.email,
+                "max_workers": self.max_workers,
+                "max_retries": self.max_retries,
+                "chunk_size": self.chunker.chunk_size,
+            },
+        )
 
     def get_drive_item(self, path: str) -> Any:
         """Navigate to a specific path in iCloud Drive."""
@@ -158,6 +176,7 @@ class DownloadManager:
 
     def download_chunk(self, url: str, start: int, end: int, item: Any = None) -> bytes:
         """Download a specific byte range with retries and backoff."""
+        self._validate_download_url(url)
         headers = {'Range': f'bytes={start}-{end}'}
         retries = 0
         last_error = None
@@ -176,6 +195,7 @@ class DownloadManager:
                     try:
                         with self._open_with_retry(item, max_retries=1) as refreshed:
                             url = refreshed.url
+                            self._validate_download_url(url)
                     except Exception:
                         pass
                 retries += 1
@@ -191,7 +211,9 @@ class DownloadManager:
                 retries += 1
                 time.sleep(2 ** retries)  # Exponential backoff
 
-        raise Exception(f"Failed to download chunk {start}-{end} after {self.max_retries} retries: {last_error}")
+        raise Exception(
+            f"Failed to download chunk {start}-{end} after {self.max_retries} retries: {self._redact_text(str(last_error))}"
+        )
 
     def _open_with_retry(self, item: Any, max_retries: Optional[int] = None) -> Any:
         """Open item with retry logic for transient connection errors."""
@@ -224,7 +246,7 @@ class DownloadManager:
                         "file": getattr(item, 'name', 'unknown'),
                         "attempt": attempt + 1,
                         "wait_seconds": wait_time,
-                        "error": str(e)
+                        "error": self._redact_text(str(e))
                     }))
                     time.sleep(wait_time)
                     continue
@@ -357,8 +379,8 @@ class DownloadManager:
             self.logger.error(json.dumps({
                 "event": "download_failed",
                 "file": getattr(item, 'name', 'unknown'),
-                "error": str(e),
-                "traceback": traceback.format_exc()
+                "error": self._redact_text(str(e)),
+                "traceback": self._redact_text(traceback.format_exc())
             }))
             if temp_path and temp_path.exists():
                 self.logger.warning(json.dumps({
@@ -373,7 +395,7 @@ class DownloadManager:
                 downloaded=0,
                 checksum="",  # Empty string instead of None
                 status="failed",
-                error=str(e)
+                error=self._redact_text(str(e))
             ))
             return False
 
@@ -436,8 +458,8 @@ class DownloadManager:
                             except Exception as e:
                                 self.logger.error(json.dumps({
                                     "event": "future_exception",
-                                    "error": str(e),
-                                    "traceback": traceback.format_exc()
+                                    "error": self._redact_text(str(e)),
+                                    "traceback": self._redact_text(traceback.format_exc())
                                 }))
 
                         # after_download hook success/failure already inside download_drive_item,
@@ -453,8 +475,8 @@ class DownloadManager:
             self.logger.error(json.dumps({
                 "event": "processing_error",
                 "file": getattr(item, 'name', 'unknown'),
-                "error": str(e),
-                "traceback": traceback.format_exc()
+                "error": self._redact_text(str(e)),
+                "traceback": self._redact_text(traceback.format_exc())
             }))
 
     def list_contents(self, path: str) -> None:
@@ -485,7 +507,7 @@ class DownloadManager:
             else:
                 self.logger.info(json.dumps({"event": "item_info", "path": path, "type": "file"}))
         except Exception as e:
-            self.logger.error(json.dumps({"event": "listing_error", "path": path, "error": str(e)}))
+            self.logger.error(json.dumps({"event": "listing_error", "path": path, "error": self._redact_text(str(e))}))
 
     # ------------------------------------------------------------------
     # Shared-drive helpers
@@ -514,7 +536,7 @@ class DownloadManager:
                 ]
             }))
         except Exception as e:
-            self.logger.error(json.dumps({"event": "shared_listing_error", "error": str(e)}))
+            self.logger.error(json.dumps({"event": "shared_listing_error", "error": self._redact_text(str(e))}))
 
     def generate_summary_report(self) -> Dict[str, Any]:
         """Generate a summary report of the download operation."""
@@ -579,7 +601,7 @@ class DownloadManager:
 
         # Create report file in the same location as downloads
         report_path = local_path_obj / "download_report.json"
-        with report_path.open('w') as f:
+        with os.fdopen(os.open(str(report_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as f:
             json.dump(report, f, indent=2)
 
     def _should_process(self, rel_path: Path, is_dir: bool) -> bool:
@@ -597,3 +619,32 @@ class DownloadManager:
         if not self.include_patterns:
             return True
         return any(fnmatch(path_str, pat) for pat in self.include_patterns)
+
+    def _load_allowed_download_hosts(self) -> List[str]:
+        env_hosts = os.environ.get("IFETCH_ALLOWED_DOWNLOAD_HOSTS", "").strip()
+        if env_hosts:
+            return [h.strip().lower() for h in env_hosts.split(",") if h.strip()]
+        return [
+            "icloud.com",
+            "icloud-content.com",
+            "apple.com",
+            "apple-cloudkit.com",
+        ]
+
+    def _validate_download_url(self, url: str) -> None:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https":
+            raise ValueError("Insecure download URL scheme rejected")
+        if not host:
+            raise ValueError("Missing download host")
+        if not any(host == allowed or host.endswith(f".{allowed}") for allowed in self.allowed_download_hosts):
+            raise ValueError(f"Untrusted download host rejected: {host}")
+
+    def _redact_text(self, value: str) -> str:
+        if not value:
+            return value
+        redacted = value
+        redacted = re.sub(r'(token|session|password|passcode|code|auth|dsid)=([^&\s]+)', r'\1=<redacted>', redacted, flags=re.IGNORECASE)
+        redacted = re.sub(r'https?://[^\s"\'<>]+', '<redacted_url>', redacted, flags=re.IGNORECASE)
+        return redacted

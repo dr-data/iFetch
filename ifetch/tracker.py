@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -36,7 +37,10 @@ class DownloadTracker:
         """
         self.current_position = position
         try:
-            with self.status_path.open('w') as f:
+            with os.fdopen(
+                os.open(str(self.status_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+                'w'
+            ) as f:
                 json.dump({'position': position}, f)
         except OSError:
             # Continue even if we can't save status
