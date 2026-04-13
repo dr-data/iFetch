@@ -645,6 +645,11 @@ class DownloadManager:
         if not value:
             return value
         redacted = value
-        redacted = re.sub(r'(token|session|password|passcode|code|auth|dsid)=([^&\s]+)', r'\1=<redacted>', redacted, flags=re.IGNORECASE)
+        redacted = re.sub(
+            r'(?<![A-Za-z0-9_])(token|session|password|passcode|auth|dsid|verification_code|2fa_code)\s*=\s*([^&\s]+)',
+            r'\1=<redacted>',
+            redacted,
+            flags=re.IGNORECASE,
+        )
         redacted = re.sub(r'https?://[^\s"\'<>]+', '<redacted_url>', redacted, flags=re.IGNORECASE)
         return redacted
