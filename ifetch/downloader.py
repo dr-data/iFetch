@@ -117,7 +117,8 @@ class DownloadManager:
         # Notify plugins that authentication completed successfully
         self.plugin_manager.dispatch(
             "on_authenticated",
-            {
+            self,
+            context={
                 "email": self.email,
                 "max_workers": self.max_workers,
                 "max_retries": self.max_retries,
@@ -646,10 +647,10 @@ class DownloadManager:
             return value
         redacted = value
         redacted = re.sub(
-            r'(?<![A-Za-z0-9_])(token|session|password|passcode|auth|dsid|verification_code|2fa_code)\s*=\s*([^&\s]+)',
-            r'\1=<redacted>',
+            r'(^|[?&\s])(token|session|password|passcode|auth|dsid|verification_code|2fa_code)\s*=\s*([^&\s]+)',
+            lambda m: f"{m.group(1)}{m.group(2)}=<redacted>",
             redacted,
-            flags=re.IGNORECASE,
+            flags=re.IGNORECASE | re.MULTILINE,
         )
         redacted = re.sub(r'https?://[^\s"\'<>]+', '<redacted_url>', redacted, flags=re.IGNORECASE)
         return redacted

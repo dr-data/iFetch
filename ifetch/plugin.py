@@ -54,8 +54,12 @@ class BasePlugin:
     """
 
     # --- Authentication --------------------------------------------------
-    def on_authenticated(self, context, **kwargs):  # noqa: D401 – imperative mood
-        """Called once iCloud authentication succeeds."""
+    def on_authenticated(self, downloader, **kwargs):  # noqa: D401 – imperative mood
+        """Called once iCloud authentication succeeds.
+
+        *downloader* is the DownloadManager instance (for backwards compatibility).
+        A sanitised dict is also available as ``kwargs.get("context")``.
+        """
 
     # --- Listing ---------------------------------------------------------
     def on_list_contents(self, path: str, contents, **kwargs):
