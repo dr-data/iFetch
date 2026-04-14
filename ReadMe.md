@@ -14,6 +14,8 @@ A robust Python utility for efficiently downloading files and folders from iClou
 - 📊 **Download summary report** (successes, failures, stats)
 - 🔍 **Directory listing mode** (without downloading)
 - 🤝 **Shared-folder support** (`--list-shared`, download shared items)
+- ☁️ **Sequential iCloud → Google Drive transfer** (download one item, upload, then cleanup local copy)
+- 🖥️ **GUI mode** for selecting items and tracing progress
 - 🧩 **Plugin system** – hook into authentication, progress & completion events
 - 🗂 **Profile-based include/exclude filters** for personalised sync sets
 - 🗄 **On-disk version history & rollback** with automatic archiving of prior versions
@@ -104,11 +106,50 @@ python ifetch/cli.py Documents/Programming ~/Work/Code \
 | `--profile NAME`        | Apply include/exclude patterns from profile file                  | (no filter)     |
 | `--profile-file PATH`   | Custom path to profile JSON (defaults to `~/.ifetch_profiles.json`) | default path    |
 | `--enable-plugins`      | Enable plugin loading (disabled by default for safety)            | off             |
+| `--gui`                 | Launch GUI for item selection + transfer progress                  | off             |
+| `--transfer-to-gdrive`  | Sequentially transfer selected iCloud items to Google Drive        | off             |
+| `--gdrive-credentials`  | Google OAuth client secret JSON path                               | `client_secrets.json` |
+| `--gdrive-token`        | Google OAuth token JSON path                                       | `~/.ifetch_gdrive_token.json` |
+| `--gdrive-folder-id`    | Optional target Google Drive folder ID                             | root            |
+| `--select-items`        | Comma-separated selection indices, or `all`                        | interactive     |
 
 ### List Shared Items
 List everything that has been shared with your account (no path needed):
 ```sh
 python ifetch/cli.py --list-shared --email you@apple.com
+```
+
+### Transfer to Google Drive (sequential + low local storage)
+The transfer mode processes one selected item at a time:
+1) download selected iCloud item to local temp folder
+2) upload that item to Google Drive
+3) delete local copy
+4) continue with next selected item
+
+```sh
+python ifetch/cli.py Documents ./ifetch_temp \
+  --email you@apple.com \
+  --transfer-to-gdrive \
+  --gdrive-credentials ./client_secrets.json
+```
+
+You can preselect items non-interactively:
+```sh
+python ifetch/cli.py Documents ./ifetch_temp \
+  --email you@apple.com \
+  --transfer-to-gdrive \
+  --gdrive-credentials ./client_secrets.json \
+  --select-items 1,2,5
+```
+
+### GUI Mode
+Launch GUI with progress bars for:
+- current file download progress
+- current file upload progress
+- whole transfer progress
+
+```sh
+python ifetch/cli.py --gui
 ```
 
 ### Use a Profile
@@ -154,6 +195,7 @@ iFetch loads plugins only when `--enable-plugins` is passed.
 ### Safety Notes
 - iFetch does **not** delete files from iCloud Drive.
 - iFetch only reads from iCloud and writes to your local destination.
+- In Google Drive transfer mode, only **local temp copies** are cleaned up after successful upload.
 - Plugin loading is disabled by default; enable only trusted plugins.
 
 ## Contributing

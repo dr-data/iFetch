@@ -6,7 +6,7 @@ import threading
 import traceback
 import re
 from pathlib import Path
-from typing import Optional, List, Set, Dict, Any, Union
+from typing import Optional, List, Set, Dict, Any, Union, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 import requests
@@ -36,6 +36,7 @@ class DownloadManager:
         exclude_patterns: Optional[List[str]] = None,
         enable_plugins: bool = False,
         allowed_download_hosts: Optional[List[str]] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ):
         self.email = email or os.environ.get('ICLOUD_EMAIL')
         if not self.email:
@@ -58,6 +59,7 @@ class DownloadManager:
         # Load plugins only when explicitly enabled
         self.plugin_manager = PluginManager(enabled=enable_plugins)
         self.allowed_download_hosts = allowed_download_hosts or self._load_allowed_download_hosts()
+        self.progress_callback = progress_callback
 
         # Will be set when download() is invoked
         self.root_path: Optional[Path] = None
@@ -125,6 +127,19 @@ class DownloadManager:
                 "chunk_size": self.chunker.chunk_size,
             },
         )
+
+    def set_progress_callback(self, callback: Optional[Callable[[Dict[str, Any]], None]]) -> None:
+        """Set a callback that receives progress/event dictionaries."""
+        self.progress_callback = callback
+
+    def _emit_progress(self, name: str, **kwargs: Any) -> None:
+        payload = {"name": name, **kwargs}
+        if self.progress_callback:
+            try:
+                self.progress_callback(payload)
+            except Exception:
+                self.logger.warning(json.dumps({"event": "progress_callback_error", "name": name}))
+        self.plugin_manager.dispatch("on_event", name=name, **kwargs)
 
     def get_drive_item(self, path: str) -> Any:
         """Navigate to a specific path in iCloud Drive."""
@@ -322,12 +337,11 @@ class DownloadManager:
                         tracker.save_status(end + 1)
 
                         # Streaming progress event (generic)
-                        self.plugin_manager.dispatch(
-                            "on_event",
-                            name="download_progress",
-                            remote_item=item,
-                            local_path=local_path,
-                            downloaded=end,
+                        self._emit_progress(
+                            "download_progress",
+                            remote_item_name=getattr(item, "name", "unknown"),
+                            local_path=str(local_path),
+                            downloaded=min(end + 1, total_size),
                             total_size=total_size,
                         )
 
@@ -374,6 +388,13 @@ class DownloadManager:
                     local_path=local_path,
                     success=True,
                 )
+                self._emit_progress(
+                    "download_file_completed",
+                    remote_item_name=getattr(item, "name", "unknown"),
+                    local_path=str(local_path),
+                    total_size=total_size,
+                    changed_ranges=len(changed_ranges),
+                )
                 return True
 
         except Exception as e:
@@ -398,6 +419,12 @@ class DownloadManager:
                 status="failed",
                 error=self._redact_text(str(e))
             ))
+            self._emit_progress(
+                "download_file_failed",
+                remote_item_name=getattr(item, "name", "unknown"),
+                local_path=str(local_path),
+                error=self._redact_text(str(e)),
+            )
             return False
 
         # Notify plugins about before/after failures handled above
@@ -418,6 +445,12 @@ class DownloadManager:
                     self._active_downloads.add(local_path_str)
 
                 try:
+                    self._emit_progress(
+                        "download_file_started",
+                        remote_item_name=getattr(item, "name", "unknown"),
+                        local_path=str(local_path),
+                        total_size=getattr(item, "size", 0),
+                    )
                     # before_download hook
                     self.plugin_manager.dispatch(
                         "before_download", remote_item=item, local_path=local_path
@@ -591,14 +624,18 @@ class DownloadManager:
             "max_workers": self.max_workers,
             "chunk_size": self.chunker.chunk_size
         }))
+        self._emit_progress(
+            "download_session_started",
+            icloud_path=icloud_path,
+            local_path=str(local_path_obj),
+        )
 
         self.process_item_parallel(item, local_path_obj)
 
         report = self.generate_summary_report()
         self.logger.info(json.dumps({"event": "download_completed", "summary": report}))
 
-        # Notify plugins with generic completion event
-        self.plugin_manager.dispatch("on_event", name="download_session_completed", summary=report)
+        self._emit_progress("download_session_completed", summary=report)
 
         # Create report file in the same location as downloads
         report_path = local_path_obj / "download_report.json"
